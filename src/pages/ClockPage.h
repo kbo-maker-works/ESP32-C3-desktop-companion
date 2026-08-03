@@ -401,10 +401,10 @@ private:
             String phrase = _buildFuzzyPhrase(tmNow);
             _renderMultiColorWords(tft, phrase, tmNow.tm_hour, tmNow.tm_min);
 
-            // Muted Dark Grey Footer Badge (Size 1)
+            // Centered & Enlarged Muted Dark Grey Footer Badge (Size 2)
             tft.setTextColor(0x4208, ST77XX_BLACK);
-            tft.setTextSize(1);
-            tft.setCursor(68, 222);
+            tft.setTextSize(2);
+            tft.setCursor(42, 208);
             tft.print("3D WORD CLOCK");
         }
 
