@@ -19,8 +19,8 @@ PcLink pcLink;
 
 ClockPage clockPage;
 WeatherPage weatherPage;
-ClaudeUsagePage claudeUsagePage(pcLink);
-ClawMascotPage clawMascotPage(pcLink);
+ClaudeUsagePage claudeUsagePage(pcLink); // Toggles Claude <-> Antigravity on Long Press
+ClawMascotPage clawMascotPage(pcLink);   // Official Claude Code robot mascot
 MatrixRefresherPage matrixPage;
 
 void setup() {

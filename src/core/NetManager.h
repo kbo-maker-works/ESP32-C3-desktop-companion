@@ -12,17 +12,25 @@ class NetManager {
 public:
     static void begin() {
         Serial.println("[NetManager] Initializing Wi-Fi...");
-        prefs().begin("wifi-config", false); // read-write mode to avoid NOT_FOUND error on first boot
-        String ssid = prefs().getString("ssid", "");
-        String pass = prefs().getString("pass", "");
+        prefs().begin("wifi-config", false); // read-write mode
+        String savedSsid = prefs().getString("ssid", "");
+        String savedPass = prefs().getString("pass", "");
+
+        String configSsid = String(WIFI_SSID);
+        String configPass = String(WIFI_PASSWORD);
+
+        // If config.h contains a valid SSID that differs from NVS flash memory, override NVS!
+        if (configSsid != "your-wifi-name" && !configSsid.isEmpty() && configSsid != savedSsid) {
+            Serial.println("[NetManager] Updating saved Wi-Fi from config.h: " + configSsid);
+            prefs().putString("ssid", configSsid);
+            prefs().putString("pass", configPass);
+            savedSsid = configSsid;
+            savedPass = configPass;
+        }
         prefs().end();
 
-        // Fallback to config.h if valid
-        if (ssid.isEmpty() && String(WIFI_SSID) != "your-wifi-name") {
-            ssid = WIFI_SSID;
-            pass = WIFI_PASSWORD;
-            Serial.println("[NetManager] Using fallback Wi-Fi from config.h");
-        }
+        String ssid = savedSsid.isEmpty() ? configSsid : savedSsid;
+        String pass = savedSsid.isEmpty() ? configPass : savedPass;
 
         if (!ssid.isEmpty()) {
             Serial.print("[NetManager] Trying to connect to SSID: ");
@@ -96,9 +104,21 @@ private:
                       "p{color:#848488;font-size:14px;line-height:1.4;text-align:center;}"
                       "label{display:block;margin-top:14px;color:#A4B2E6;font-size:13px;font-weight:600;}"
                       "input,select{width:100%;padding:10px;margin-top:6px;border-radius:6px;border:1px solid #313136;background:#101012;color:#FFF;box-sizing:border-box;font-size:14px;}"
-                      "button{width:100%;padding:12px;margin-top:20px;background:#E58C8A;color:#101012;border:none;border-radius:6px;font-weight:bold;font-size:15px;cursor:pointer;}"
-                      "button:hover{background:#F4EFE6;}"
-                      "</style></head><body><div class='card'>"
+                      ".pass-wrap{position:relative;margin-top:6px;}"
+                      ".pass-wrap input{padding-right:44px;margin-top:0;}"
+                      ".eye-btn{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:36px!important;height:34px;padding:0!important;margin:0!important;background:transparent!important;border:none!important;font-size:18px;cursor:pointer;opacity:0.8;}"
+                      ".eye-btn:hover{opacity:1;}"
+                      ".btn-submit{width:100%;padding:12px;margin-top:20px;background:#E58C8A;color:#101012;border:none;border-radius:6px;font-weight:bold;font-size:15px;cursor:pointer;}"
+                      ".btn-submit:hover{background:#F4EFE6;}"
+                      "</style>"
+                      "<script>"
+                      "function togglePass(){"
+                      "var p=document.getElementById('pass');"
+                      "var b=document.getElementById('eyeBtn');"
+                      "if(p.type==='password'){p.type='text';b.textContent='🙈';}else{p.type='password';b.textContent='👁️';}"
+                      "}"
+                      "</script>"
+                      "</head><body><div class='card'>"
                       "<h2>🤖 Companion Setup</h2>"
                       "<p>Selecciona tu red Wi-Fi e introduce la contraseña para conectar el dispositivo.</p>"
                       "<form action='/save' method='POST'>"
@@ -116,8 +136,11 @@ private:
 
         html += "</select>"
                 "<label>Contraseña:</label>"
-                "<input type='password' name='pass' placeholder='Tu contraseña de Wi-Fi' required>"
-                "<button type='submit'>Guardar y Conectar</button>"
+                "<div class='pass-wrap'>"
+                "<input type='password' id='pass' name='pass' placeholder='Tu contraseña de Wi-Fi' required>"
+                "<button type='button' id='eyeBtn' class='eye-btn' onclick='togglePass()'>👁️</button>"
+                "</div>"
+                "<button type='submit' class='btn-submit'>Guardar y Conectar</button>"
                 "</form></div></body></html>";
 
         server().send(200, "text/html", html);

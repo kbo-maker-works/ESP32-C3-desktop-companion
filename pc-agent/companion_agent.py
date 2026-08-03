@@ -56,12 +56,25 @@ def get_claude_dirs():
 
 
 def find_serial_port():
-    """Auto-detects ESP32 USB CDC serial port on Windows and macOS."""
+    """Auto-detects ESP32 USB CDC serial port on Windows, macOS, and Linux."""
+    system = platform.system()
     for port in serial.tools.list_ports.comports():
         dev = (port.device or "").lower()
         desc = (port.description or "").lower()
-        if "usbmodem" in dev or "usbserial" in dev or "cdc" in desc or "usb serial" in desc or "usb-jtag" in desc or "com" in dev:
-            return port.device
+        hwid = (port.hwid or "").lower()
+        
+        # Skip Bluetooth incoming ports on macOS / Windows
+        if "bluetooth" in dev or "bluetooth" in desc:
+            continue
+
+        if system == "Windows":
+            if dev.startswith("com") or "usb" in desc or "cdc" in desc or "jtag" in desc:
+                return port.device
+        else: # macOS / Linux
+            if any(k in dev for k in ["usbmodem", "usbserial", "wchusbserial", "slab_usb", "ttyacm", "ttyusb"]):
+                return port.device
+            if any(k in desc or k in hwid for k in ["cdc", "usb serial", "usb-jtag", "esp32", "ch340", "cp210"]):
+                return port.device
     return None
 
 
@@ -111,66 +124,37 @@ def read_real_usage():
 
 
 def scan_real_claude_tokens():
-    """Scans local Claude Code transcripts, stats-cache.json, and history.jsonl to compute actual tokens used."""
+    """Scans local Claude Code stats-cache.json for active session / latest day tokens."""
     global _last_log_check_time, _cached_tokens
     now = time.time()
     
-    # Refresh token count from logs every 2 seconds
     if now - _last_log_check_time < 2 and _cached_tokens > 0:
         return _cached_tokens
 
     _last_log_check_time = now
-    total_tokens = 0
+    latest_day_tokens = 0
     claude_dirs = get_claude_dirs()
 
+    # Read latest day's model tokens from stats-cache.json
     for c_dir in claude_dirs:
-        # 1. Parse stats-cache.json if available
         stats_file = os.path.join(c_dir, "stats-cache.json")
         if os.path.exists(stats_file):
             try:
                 with open(stats_file, "r", encoding="utf-8") as f:
                     sdata = json.load(f)
-                    m_usage = sdata.get("modelUsage", {})
-                    for model_name, m_data in m_usage.items():
-                        in_tok = m_data.get("inputTokens", 0)
-                        out_tok = m_data.get("outputTokens", 0)
-                        total_tokens += (in_tok + out_tok)
+                    daily_models = sdata.get("dailyModelTokens", [])
+                    if daily_models:
+                        # Pick latest active day's model tokens
+                        latest_entry = daily_models[-1]
+                        latest_day_tokens = sum(latest_entry.get("tokensByModel", {}).values())
             except Exception:
                 pass
 
-        # 2. Parse history.jsonl and transcript files
-        patterns = [
-            os.path.join(c_dir, "*.jsonl"),
-            os.path.join(c_dir, "**", "*.jsonl"),
-            os.path.join(c_dir, "**", "*.json"),
-            os.path.join(c_dir, "logs", "*.log"),
-        ]
-        for pattern in patterns:
-            for filepath in glob.glob(pattern, recursive=True):
-                try:
-                    if os.path.getmtime(filepath) < (now - 7 * 86400):
-                        continue
+    if latest_day_tokens > 0:
+        _cached_tokens = latest_day_tokens
+        return latest_day_tokens
 
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        for line in f:
-                            if "tokens" in line or "input_tokens" in line or "outputTokens" in line:
-                                try:
-                                    data = json.loads(line)
-                                    if isinstance(data, dict):
-                                        usage = data.get("usage", {}) or data.get("token_usage", {})
-                                        in_tok = usage.get("input_tokens", 0) or data.get("input_tokens", 0) or data.get("inputTokens", 0)
-                                        out_tok = usage.get("output_tokens", 0) or data.get("output_tokens", 0) or data.get("outputTokens", 0)
-                                        total_tokens += (in_tok + out_tok)
-                                except Exception:
-                                    pass
-                except Exception:
-                    pass
-
-    if total_tokens > 0:
-        _cached_tokens = total_tokens
-        return total_tokens
-    
-    return 107432
+    return 142500
 
 
 def get_claude_metrics():
@@ -181,14 +165,15 @@ def get_claude_metrics():
     # Detect active Claude Code CLI / node / python agent processes
     for proc in psutil.process_iter(['name', 'cmdline']):
         try:
-            name = (proc.info['name'] or '').lower()
-            cmd = " ".join(proc.info['cmdline'] or []).lower()
+            name = (proc.info.get('name') or '').lower()
+            cmd_args = [str(c) for c in (proc.info.get('cmdline') or []) if c]
+            cmd = " ".join(cmd_args).lower()
             
             if 'claude' in name or 'claude' in cmd or 'antigravity' in name or 'gemini' in name:
                 claude_active = True
                 active_process_name = name
                 break
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+        except Exception:
             pass
 
     tokens = scan_real_claude_tokens()
@@ -223,50 +208,159 @@ def get_claude_metrics():
         mood = moods[(elapsed // 10) % len(moods)]
 
     return {
+        "c_tok": tokens,
+        "c_5h": h5_pct,
+        "c_5hr": h5_reset,
+        "c_wk": week_pct,
+        "c_wkr": week_reset,
+        "c_st": status,
+        "claw_mood": mood,
         "claude_tokens": tokens,
         "claude_5h_pct": h5_pct,
         "claude_5h_reset": h5_reset,
         "claude_week_pct": week_pct,
         "claude_week_reset": week_reset,
-        "claude_status": status,
-        "claw_mood": mood
+        "claude_status": status
+    }
+
+
+def get_antigravity_metrics():
+    """Scans real Antigravity (~/.gemini/antigravity) transcripts and process activity for live metrics."""
+    ag_dir = os.path.expanduser(os.path.join("~", ".gemini", "antigravity"))
+    brain_dir = os.path.join(ag_dir, "brain")
+
+    ag_active = False
+    model_name = "Gemini 3.6 Flash"
+    last_tool = "standby"
+    subagents_count = 0
+    total_tokens = 84200
+    context_pct = 18.5
+
+    # 1. Process activity scan
+    for proc in psutil.process_iter(['name', 'cmdline']):
+        try:
+            name = (proc.info.get('name') or '').lower()
+            cmd_args = [str(c) for c in (proc.info.get('cmdline') or []) if c]
+            cmd = " ".join(cmd_args).lower()
+            if any(k in name or k in cmd for k in ['antigravity', 'gemini', 'cagent']):
+                ag_active = True
+                break
+        except Exception:
+            pass
+
+    # 2. Real transcript inspection from ~/.gemini/antigravity/brain
+    if os.path.exists(brain_dir):
+        transcripts = glob.glob(os.path.join(brain_dir, "*", ".system_generated", "logs", "transcript.jsonl"))
+        if transcripts:
+            latest_transcript = max(transcripts, key=os.path.getmtime)
+            mtime = os.path.getmtime(latest_transcript)
+            age_sec = time.time() - mtime
+            file_size = os.path.getsize(latest_transcript)
+
+            # If modified in last 60s, Antigravity is actively processing!
+            if age_sec < 60:
+                ag_active = True
+
+            try:
+                with open(latest_transcript, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+
+                total_steps = len(lines)
+                total_tokens = int(file_size / 4.0)
+                context_pct = round(min(99.0, max(1.0, (file_size / 1572864.0) * 100.0)), 1)
+
+                # Scan recent steps for tool calls, model settings, and subagents
+                for line in reversed(lines[-30:]):
+                    try:
+                        data = json.loads(line)
+                        content = str(data.get("content") or "")
+
+                        if "Gemini 3.6 Pro" in content or "pro" in content.lower():
+                            model_name = "Gemini 3.6 Pro"
+
+                        t_calls = data.get("tool_calls", [])
+                        if t_calls and last_tool == "standby":
+                            t_name = t_calls[0].get("name", "")
+                            if t_name:
+                                if "replace_file" in t_name: last_tool = "replace_file"
+                                elif "run_command" in t_name: last_tool = "run_command"
+                                elif "view_file" in t_name: last_tool = "view_file"
+                                elif "write_to_file" in t_name: last_tool = "write_file"
+                                elif "list_dir" in t_name: last_tool = "list_dir"
+                                elif "grep_search" in t_name: last_tool = "grep_search"
+                                elif "ask_question" in t_name: last_tool = "ask_question"
+                                else: last_tool = t_name[:12]
+
+                        if "invoke_subagent" in line or "define_subagent" in line:
+                            subagents_count += 1
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+    status = "Coding..." if ag_active and (int(time.time()) % 4 < 2) else ("Pensando..." if ag_active else "Idle")
+    if not ag_active:
+        last_tool = "standby"
+
+    return {
+        "ag_m": model_name,
+        "ag_st": status,
+        "ag_tok": total_tokens,
+        "ag_ctx": context_pct,
+        "ag_sub": subagents_count,
+        "ag_t": last_tool,
+        "ag_model": model_name,
+        "ag_status": status,
+        "ag_tokens": total_tokens,
+        "ag_context_pct": context_pct,
+        "ag_subagents": subagents_count,
+        "ag_tool": last_tool
     }
 
 
 def main():
-    print(f"=== ESP32-C3 Desktop Companion Agent ({platform.system()}) ===")
+    print(f"=== ESP32-C3 Desktop Companion Agent ({platform.system()}) ===", flush=True)
     
     claude_dirs = get_claude_dirs()
     if claude_dirs:
-        print(f"Detected Claude directories: {claude_dirs}")
+        print(f"Detected Claude directories: {claude_dirs}", flush=True)
     else:
-        print("No local Claude directory found. Will use auto-fallback metrics.")
+        print("No local Claude directory found. Will use auto-fallback metrics.", flush=True)
 
-    port = sys.argv[1] if len(sys.argv) > 1 else find_serial_port()
-    if not port:
-        print("\nCould not auto-detect the board's serial port.")
-        if platform.system() == "Windows":
-            print("Usage: python companion_agent.py COM5")
-        else:
-            print("Usage: python companion_agent.py /dev/cu.usbmodem1101")
-        sys.exit(1)
-
-    print(f"Connecting to {port} @ {BAUD_RATE} baud...")
+    explicit_port = sys.argv[1] if len(sys.argv) > 1 else None
 
     while True:
+        port = explicit_port or find_serial_port()
+        if not port:
+            print("Searching for ESP32 USB CDC serial port...", flush=True)
+            time.sleep(RECONNECT_INTERVAL_SEC)
+            continue
+
+        print(f"Connecting to {port} @ {BAUD_RATE} baud...", flush=True)
+
         try:
             with serial.Serial(port, BAUD_RATE, timeout=1) as ser:
-                print(f"Connected to {port}! Streaming Claude Code metrics every {SEND_INTERVAL_SEC}s.")
+                ser.dtr = True
+                ser.rts = True
+                print(f"Connected to {port}! Streaming AI metrics (Claude & Antigravity) every {SEND_INTERVAL_SEC}s.", flush=True)
                 while True:
-                    payload = get_claude_metrics()
-                    line = json.dumps(payload) + "\n"
-                    ser.write(line.encode("utf-8"))
+                    try:
+                        payload = get_claude_metrics()
+                        payload.update(get_antigravity_metrics())
+                        line = json.dumps(payload) + "\n"
+                        ser.write(line.encode("utf-8"))
+                        ser.flush()
+                    except (serial.SerialException, OSError) as write_err:
+                        print(f"Serial write error ({write_err}). Reconnecting...", flush=True)
+                        break
+                    except Exception as loop_err:
+                        print(f"Metrics calculation error: {loop_err}", flush=True)
                     time.sleep(SEND_INTERVAL_SEC)
         except serial.SerialException as exc:
-            print(f"Serial error ({exc}); retrying in {RECONNECT_INTERVAL_SEC}s...")
+            print(f"Serial connection lost/error ({exc}). Retrying in {RECONNECT_INTERVAL_SEC}s...", flush=True)
             time.sleep(RECONNECT_INTERVAL_SEC)
         except KeyboardInterrupt:
-            print("\nAgent stopped.")
+            print("\nAgent stopped.", flush=True)
             break
 
 

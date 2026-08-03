@@ -7,23 +7,27 @@
 
 An interactive, zero-flicker desktop companion monitor powered by an **ESP32-C3 Supermini**, an **ST7789 240x240 SPI display**, a **TTP223 capacitive touch sensor**, and a **3D-printed enclosure crafted on a Bambulab P2S**.
 
-Includes 5 customizable pages, zero-flicker differential rendering, Open-Meteo weather integration, Claude Code AI metrics, Matrix digital rain, Star Wars opening crawl credits, Pac-Man arcade action, and an AFK sleeping mascot mode.
+Includes 5 customizable pages, 5 watch faces (including a 3D Word Clock replica), dual AI assistant monitoring (Claude Code & Antigravity AI), Open-Meteo weather integration, Matrix digital rain, Star Wars opening crawl credits, Pac-Man arcade action, and an AFK sleeping mascot mode.
 
 ---
 
 ## 🌟 Key Features
 
-1. **Clock (4 Customizable Watch Faces)**:
-   * **Face 0 (Minimal Digital)**: Clean digital layout with Wi-Fi status and weather complication.
-   * **Face 1 (Apple/Nike Duo-Color GIANT)**: Stacked size 10 digits with electric blue & coral theme.
-   * **Face 2 (Classic Analog Chronograph)**: Zero-flicker 1-pixel differential hand erasing with sub-dials.
-   * **Face 3 (Retro Striped)**: Cream & gold stacked numbers with `DD-MM-YYYY` date formatting.
+1. **Clock (5 Customizable Watch Faces)**:
+   * **Face 0 (3D WordClock "Hablando Claro" - Default)**: Dynamic Spanish conversational time phrases with 5-minute zero-flicker buckets, time-of-day contextual humor (lunch, leaving work, morning coffee, sleep time), multi-color LED neon words, and centered weather complication.
+   * **Face 1 (Minimal Digital)**: Clean digital layout with Wi-Fi status and weather complication.
+   * **Face 2 (Apple/Nike Duo-Color GIANT)**: Stacked size 10 digits with electric blue & coral theme.
+   * **Face 3 (Classic Analog Chronograph)**: Zero-flicker 1-pixel differential hand erasing with sub-dials.
+   * **Face 4 (Retro Striped)**: Cream & gold stacked numbers with `DD-MM-YYYY` date formatting.
    * **Vector Weather Icons**: Sun ☀️ / Moon 🌙 (day/night API detection), Cloud ☁️, Rain 🌧️, and Storm 🌩️ drawn with GFX primitives.
 2. **Dedicated Weather Page**:
    * Powered by **Open-Meteo API** (100% Free, **Zero API key required**).
    * Displays temperature, a large **32x32px vector weather icon**, condition text, relative humidity, and centered API credit.
-3. **Claude Code Usage**:
-   * Token counter, session quota card, weekly quota card (`WEEKLY`), and status indicator in Anthropic Obsidian dark mode.
+3. **Dual AI Assistant Monitor (Claude Code & Antigravity AI)**:
+   * Long-press toggle between **Claude Code** and **Antigravity AI**.
+   * **Claude Code Mode**: Session & weekly token usage progress bars in Anthropic Obsidian dark mode.
+   * **Antigravity AI Mode**: Active model header badge (`Gemini 3.6 Pro`), Card 1: `SUBAGENTES` count & progress bar, Card 2: `CUOTA AGY` context window percentage + active tool label (`Tool: run_command`, `replace_file`, etc.).
+   * **Offline Zero State**: Automatically zeroed values (`0 K` tokens, `0%` progress bars, `--` badges) when USB CDC link is offline.
 4. **Claude AI Companion Mascot**:
    * Animated pixel-art robot mascot with speech bubble (*"Hola Alejo!"*), facial expressions, and touch-petted heart reaction (`<3 PURR! <3`).
 5. **Matrix Rain, Star Wars Credits & Arcade Page**:
@@ -31,8 +35,8 @@ Includes 5 customizable pages, zero-flicker differential rendering, Open-Meteo w
    * **Mode 1 (Star Wars Opening Crawl)**: Custom Star Wars intro sequence with twinkling starfield, yellow credits crawl, and project backstory.
    * **Mode 2 (Pac-Man Arcade)**: Classic Pac-Man animation with ghost color cycling (Blinky 🔴, Pinky 💖, Inky 💙, Clyde 🧡).
    * **Mode 3 (AFK Sleep Mode)**: Cozy 3D-styled pixel art bedroom with Claude mascot sleeping in a wooden bed with floating `Zzz` animation.
-6. **Wi-Fi Captive Portal & AP Web Server**:
-   * Hotspot AP `Companion-Setup` on `http://192.168.4.1` with NVS Flash memory storage for easy Wi-Fi configuration via mobile phone or laptop.
+6. **Wi-Fi Captive Portal & Smart NVS Auto-Sync**:
+   * Hotspot AP `Companion-Setup` on `http://192.168.4.1` with NVS Flash memory storage. Automatically syncs and updates saved Wi-Fi if `src/config.h` is edited.
 
 ---
 
@@ -80,12 +84,12 @@ For detailed wire color mappings and mounting instructions, see **[wiring_diagra
 
 ## 🐍 PC Agent Script
 
-The PC side script streams live Claude Code usage metrics to the ESP32 over USB CDC Serial:
+The PC side script streams live Claude Code & Antigravity AI usage metrics to the ESP32 over USB CDC Serial (with auto-reconnect on port disconnect):
 
 ```bash
 cd pc-agent
 pip install -r requirements.txt
-python companion_agent.py COM5
+python companion_agent.py /dev/cu.usbmodem1101
 ```
 
 ---

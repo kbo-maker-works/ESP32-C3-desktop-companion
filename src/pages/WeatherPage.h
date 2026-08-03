@@ -112,22 +112,24 @@ private:
     void _drawBigWeatherIcon(Adafruit_ST7789 &tft, int x, int y) {
         if (!_haveData) return;
 
+        static constexpr uint16_t COLOR_SUN_GOLD = 0xFD20; // Warm Solar Golden Yellow (#FFD700)
+
         if (_wCode == 0) {
             if (_isDay) {
-                // Sun Icon ☀️ (Yellow circle + 8 rays)
-                tft.fillCircle(x + 16, y + 16, 10, ST77XX_YELLOW);
-                tft.drawLine(x + 16, y + 2, x + 16, y + 5, ST77XX_YELLOW);
-                tft.drawLine(x + 16, y + 27, x + 16, y + 30, ST77XX_YELLOW);
-                tft.drawLine(x + 2, y + 16, x + 5, y + 16, ST77XX_YELLOW);
-                tft.drawLine(x + 27, y + 16, x + 30, y + 16, ST77XX_YELLOW);
+                // Sun Icon ☀️ (Warm Golden Yellow circle + 8 rays)
+                tft.fillCircle(x + 16, y + 16, 10, COLOR_SUN_GOLD);
+                tft.drawLine(x + 16, y + 2, x + 16, y + 5, COLOR_SUN_GOLD);
+                tft.drawLine(x + 16, y + 27, x + 16, y + 30, COLOR_SUN_GOLD);
+                tft.drawLine(x + 2, y + 16, x + 5, y + 16, COLOR_SUN_GOLD);
+                tft.drawLine(x + 27, y + 16, x + 30, y + 16, COLOR_SUN_GOLD);
                 
-                tft.drawLine(x + 6, y + 6, x + 9, y + 9, ST77XX_YELLOW);
-                tft.drawLine(x + 23, y + 23, x + 26, y + 26, ST77XX_YELLOW);
-                tft.drawLine(x + 23, y + 6, x + 20, y + 9, ST77XX_YELLOW);
-                tft.drawLine(x + 6, y + 23, x + 9, y + 20, ST77XX_YELLOW);
+                tft.drawLine(x + 6, y + 6, x + 9, y + 9, COLOR_SUN_GOLD);
+                tft.drawLine(x + 23, y + 23, x + 26, y + 26, COLOR_SUN_GOLD);
+                tft.drawLine(x + 23, y + 6, x + 20, y + 9, COLOR_SUN_GOLD);
+                tft.drawLine(x + 6, y + 23, x + 9, y + 20, COLOR_SUN_GOLD);
             } else {
                 // Crescent Moon Icon 🌙 (Gold circle + cutout + stars)
-                tft.fillCircle(x + 16, y + 16, 12, 0xFBE0);
+                tft.fillCircle(x + 16, y + 16, 12, COLOR_SUN_GOLD);
                 tft.fillCircle(x + 21, y + 12, 11, ST77XX_BLACK);
                 tft.drawPixel(x + 6, y + 8, ST77XX_WHITE);
                 tft.drawPixel(x + 26, y + 24, ST77XX_WHITE);
@@ -145,8 +147,8 @@ private:
             tft.fillCircle(x + 10, y + 10, 7, 0xD67A);
             tft.fillCircle(x + 20, y + 8, 9, 0xD67A);
             tft.fillRect(x + 5, y + 12, 20, 7, 0xD67A);
-            tft.drawLine(x + 18, y + 20, x + 12, y + 26, ST77XX_YELLOW);
-            tft.drawLine(x + 12, y + 26, x + 16, y + 29, ST77XX_YELLOW);
+            tft.drawLine(x + 18, y + 20, x + 12, y + 26, COLOR_SUN_GOLD);
+            tft.drawLine(x + 12, y + 26, x + 16, y + 29, COLOR_SUN_GOLD);
         } else {
             // Cloud Icon (Cloud)
             tft.fillCircle(x + 10, y + 12, 7, 0xD67A);
