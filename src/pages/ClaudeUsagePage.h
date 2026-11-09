@@ -22,6 +22,7 @@ public:
         _prevReset2 = "";
         _prevTool = "";
         _prevModel = "";
+        _prevClaudeUser = "";
         _modeBannerMs = 0;
         _drawStaticLayout(tft);
     }
@@ -93,6 +94,7 @@ private:
     String _prevReset2;
     String _prevTool;
     String _prevModel;
+    String _prevClaudeUser;
 
     void _drawStaticLayout(Adafruit_ST7789 &tft) {
         tft.fillScreen(COLOR_BG);
@@ -146,6 +148,7 @@ private:
         _prevReset2 = "";
         _prevTool = "";
         _prevModel = "";
+        _prevClaudeUser = "";
 
         // Synchronously populate full content in single pass
         bool online = _link.isOnline();
@@ -215,22 +218,39 @@ private:
 
     void _updateClaudeMode(Adafruit_ST7789 &tft, bool online) {
         // 1. Status Line
-        String status = online ? _link.claudeStatus() : "Desconectado";
+        String status = online ? _link.claudeStatus() : "";
         if (status != _prevStatus) {
             _prevStatus = status;
-            uint16_t dotColor = !online ? COLOR_CLAUDE_MUTED :
-                               ((status == "Coding..." || status == "Programando...") ? COLOR_TERRACOTTA : 
-                               ((status == "Thinking..." || status == "Pensando...") ? COLOR_LAVENDER : COLOR_AMBER));
-            
-            tft.fillRect(24, 30, 210, 18, COLOR_BG);
-            tft.fillCircle(14, 37, 4, dotColor);
-            tft.setTextColor(dotColor, COLOR_BG);
-            tft.setTextSize(2);
-            tft.setCursor(24, 30);
-            tft.print(status);
+            tft.fillRect(10, 30, 224, 18, COLOR_BG);
+
+            if (!status.isEmpty() && status != "Idle" && status != "Desconectado") {
+                uint16_t dotColor = COLOR_TERRACOTTA;
+                tft.fillCircle(14, 37, 4, dotColor);
+                tft.setTextColor(dotColor, COLOR_BG);
+                tft.setTextSize(2);
+                tft.setCursor(24, 30);
+                tft.print(status);
+            }
         }
 
-        // 2. Tokens Spent Value (0 when offline)
+        // 2. Logged-in User / Account Email (Right next to TOKENS USADOS in COLOR_TERRACOTTA)
+        String user = online ? _link.claudeUser() : "";
+        if (user != _prevClaudeUser) {
+            _prevClaudeUser = user;
+            tft.fillRect(94, 46, 138, 12, COLOR_BG);
+            if (!user.isEmpty()) {
+                if (user.length() > 22) user = user.substring(0, 20) + "..";
+                int txtW = user.length() * 6;
+                int txtX = 228 - txtW;
+                if (txtX < 94) txtX = 94;
+                tft.setTextColor(COLOR_TERRACOTTA, COLOR_BG);
+                tft.setTextSize(1);
+                tft.setCursor(txtX, 48);
+                tft.print(user);
+            }
+        }
+
+        // 3. Tokens Spent Value (0 when offline)
         uint32_t tokens = online ? _link.claudeTokens() : 0;
         if (tokens != _prevTokens) {
             _prevTokens = tokens;

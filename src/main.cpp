@@ -10,6 +10,7 @@
 #include "pages/WeatherPage.h"
 #include "pages/ClaudeUsagePage.h"
 #include "pages/ClawMascotPage.h"
+#include "pages/FlightRadarPage.h"
 #include "pages/MatrixRefresherPage.h"
 
 DisplayManager display;
@@ -21,6 +22,7 @@ ClockPage clockPage;
 WeatherPage weatherPage;
 ClaudeUsagePage claudeUsagePage(pcLink); // Toggles Claude <-> Antigravity on Long Press
 ClawMascotPage clawMascotPage(pcLink);   // Official Claude Code robot mascot
+FlightRadarPage flightRadarPage(pcLink); // Live ATC Vector Flight Radar Page
 MatrixRefresherPage matrixPage;
 
 void setup() {
@@ -34,6 +36,7 @@ void setup() {
     pages.addPage(&weatherPage);
     pages.addPage(&claudeUsagePage);
     pages.addPage(&clawMascotPage);
+    pages.addPage(&flightRadarPage);
     pages.addPage(&matrixPage);
     pages.begin(display.tft());
 }

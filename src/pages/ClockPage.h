@@ -345,7 +345,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // FACE 3: Retro Striped / Art Deco Stacked
+    // FACE 4: Retro Striped / Art Deco Stacked
     // -----------------------------------------------------------------------
     void _drawRetroStriped(Adafruit_ST7789 &tft, const struct tm &tmNow) {
         char hrStr[4], minStr[4];
@@ -434,37 +434,37 @@ private:
         int varSeed = (h + bucket) % 3; // Stable seed per 5-min bucket!
 
         // --- SPECIAL TIME-OF-DAY CONTEXT RULES ---
-        // 13:30 - 15:00 -> Lunch time! 🍕
+        // 13:30 - 15:00 -> Lunch time!
         if (h == 13 && m >= 30) {
-            if (varSeed == 0) return "HORA DE COMER ! 🍕";
-            if (varSeed == 1) return "¡ A ALMORZAR ! 🍽️";
-            return "¿ HAMBRE ? A COMER";
+            if (varSeed == 0) return "HORA DE COMER !";
+            if (varSeed == 1) return "A ALMORZAR YA !";
+            return "HAMBRE ? A COMER";
         }
         if (h == 14 && m <= 45) {
-            if (varSeed == 0) return "HORA DEL ALMUERZO 🍝";
-            if (varSeed == 1) return "A LA MESA YA ! 🍕";
-            return "¿ YA HAS COMIDO ?";
+            if (varSeed == 0) return "HORA DEL ALMUERZO";
+            if (varSeed == 1) return "A LA MESA YA !";
+            return "YA HAS COMIDO ?";
         }
 
-        // 17:00 - 18:30 -> End of work day! 🚗
+        // 17:00 - 18:30 -> End of work day!
         if ((h == 17 && m >= 0) || (h == 18 && m <= 30)) {
-            if (varSeed == 0) return "YA ES HORA DE IRSE 🚗";
-            if (varSeed == 1) return "¿ TRABAJO MAÑANA TAMBIEN ? 😅";
+            if (varSeed == 0) return "YA ES HORA DE IRSE";
+            if (varSeed == 1) return "TRABAJO MANANA TAMBIEN ?";
             return "CASI HORA DE PLEGAR";
         }
 
-        // 08:00 - 09:15 -> Morning Coffee / Start ☕
+        // 08:00 - 09:15 -> Morning Coffee / Start
         if ((h == 8 && m >= 0) || (h == 9 && m <= 15)) {
-            if (varSeed == 0) return "¡ CAFE URGENTE ! ☕";
-            if (varSeed == 1) return "HORA DE ARRANCAR 🚀";
-            return "¡ BUENOS DIAS !";
+            if (varSeed == 0) return "CAFE URGENTE !";
+            if (varSeed == 1) return "HORA DE ARRANCAR";
+            return "BUENOS DIAS !";
         }
 
-        // 23:30 - 06:45 -> Sleep time 😴
+        // 23:30 - 06:45 -> Sleep time
         if (h >= 23 || h <= 6) {
-            if (varSeed == 0) return "¡ A DORMIR YA ! 😴";
-            if (varSeed == 1) return "HORA DE LOS BUHOS 🦉";
-            return "MAÑANA MADRUGAS ...";
+            if (varSeed == 0) return "A DORMIR YA !";
+            if (varSeed == 1) return "HORA DE LOS BUHOS";
+            return "MANANA MADRUGAS ...";
         }
 
         // --- 5-MINUTE BUCKET FUZZY TIME PHRASES ---
@@ -478,67 +478,87 @@ private:
         const char *hStr = HOURS_ES[h12];
         const char *nextHStr = HOURS_ES[nextH12];
 
+        bool isUna = (h12 == 1);
+        bool isNextUna = (nextH12 == 1);
+
+        String sonLas = isUna ? "ES LA " : "SON LAS ";
+        String las = isUna ? "LA " : "LAS ";
+        String pasadasLas = isUna ? "PASADA LA " : "PASADAS LAS ";
+        String pasaditasLas = isUna ? "PASADITA LA " : "PASADITAS LAS ";
+        String recienLas = isUna ? "RECIEN LA " : "RECIEN LAS ";
+        String justoLas = isUna ? "JUSTO LA " : "JUSTO LAS ";
+        String enPuntoLas = isUna ? "EN PUNTO LA " : "EN PUNTO LAS ";
+        String casiLas = isUna ? "CASI LA " : "CASI LAS ";
+        String mitadDe = isUna ? "MITAD DE LA " : "MITAD DE LAS ";
+
+        String nextLas = isNextUna ? "LA " : "LAS ";
+        String nextParaLas = isNextUna ? "PARA LA " : "PARA LAS ";
+        String nextCasiLas = isNextUna ? "CASI LA " : "CASI LAS ";
+        String nextSonCasi = isNextUna ? "ES CASI LA " : "SON CASI LAS ";
+        String nextRozando = isNextUna ? "ROZANDO LA " : "ROZANDO LAS ";
+        String nextFaltan = isNextUna ? "FALTA " : "FALTAN ";
+
         switch (bucket) {
             case 0: // 00 - 04
-                if (varSeed == 0) return String("SON LAS ") + hStr + " EN PUNTO";
-                if (varSeed == 1) return String("EN PUNTO LAS ") + hStr;
-                return String("JUSTO LAS ") + hStr;
+                if (varSeed == 0) return sonLas + hStr + " EN PUNTO";
+                if (varSeed == 1) return enPuntoLas + hStr;
+                return justoLas + hStr;
 
             case 1: // 05 - 09
-                if (varSeed == 0) return String("SON LAS ") + hStr + " Y CINCO";
-                if (varSeed == 1) return String("PASADITAS LAS ") + hStr;
-                return String("RECIEN LAS ") + hStr;
+                if (varSeed == 0) return sonLas + hStr + " Y CINCO";
+                if (varSeed == 1) return pasaditasLas + hStr;
+                return recienLas + hStr;
 
             case 2: // 10 - 14
-                if (varSeed == 0) return String("SON LAS ") + hStr + " Y DIEZ";
-                if (varSeed == 1) return String("PASADAS LAS ") + hStr;
-                return String("LAS ") + hStr + " Y DIEZ";
+                if (varSeed == 0) return sonLas + hStr + " Y DIEZ";
+                if (varSeed == 1) return pasadasLas + hStr;
+                return las + hStr + " Y DIEZ";
 
             case 3: // 15 - 19
-                if (varSeed == 0) return String("SON LAS ") + hStr + " Y CUARTO";
-                if (varSeed == 1) return String("PASADAS LAS ") + hStr + " Y CUARTO";
-                return String("LAS ") + hStr + " Y QUINCE";
+                if (varSeed == 0) return sonLas + hStr + " Y CUARTO";
+                if (varSeed == 1) return pasadasLas + hStr + " Y CUARTO";
+                return las + hStr + " Y QUINCE";
 
             case 4: // 20 - 24
-                if (varSeed == 0) return String("SON LAS ") + hStr + " Y VEINTE";
-                if (varSeed == 1) return String("CAMINO A LA MEDIA DE ") + hStr;
-                return String("LAS ") + hStr + " Y VEINTE";
+                if (varSeed == 0) return sonLas + hStr + " Y VEINTE";
+                if (varSeed == 1) return String("CAMINO A LA MEDIA DE ") + las + hStr;
+                return las + hStr + " Y VEINTE";
 
             case 5: // 25 - 29
-                if (varSeed == 0) return String("SON LAS ") + hStr + " Y VEINTICINCO";
-                if (varSeed == 1) return String("CASI LAS ") + hStr + " Y MEDIA";
-                return String("ROZANDO LA MEDIA DE ") + hStr;
+                if (varSeed == 0) return sonLas + hStr + " Y VEINTICINCO";
+                if (varSeed == 1) return casiLas + hStr + " Y MEDIA";
+                return String("ROZANDO LA MEDIA DE ") + las + hStr;
 
             case 6: // 30 - 34
-                if (varSeed == 0) return String("SON LAS ") + hStr + " Y MEDIA";
-                if (varSeed == 1) return String("JUSTO LAS ") + hStr + " Y MEDIA";
-                return String("MITAD DE LAS ") + hStr;
+                if (varSeed == 0) return sonLas + hStr + " Y MEDIA";
+                if (varSeed == 1) return justoLas + hStr + " Y MEDIA";
+                return mitadDe + hStr;
 
             case 7: // 35 - 39
-                if (varSeed == 0) return String("PASADAS LAS ") + hStr + " Y MEDIA";
-                if (varSeed == 1) return String("CAMINO A LAS ") + nextHStr;
-                return String("PASA DE LAS ") + hStr + " Y MEDIA";
+                if (varSeed == 0) return pasadasLas + hStr + " Y MEDIA";
+                if (varSeed == 1) return String("CAMINO A ") + nextLas + nextHStr;
+                return String("PASA DE ") + las + hStr + " Y MEDIA";
 
             case 8: // 40 - 44
-                if (varSeed == 0) return String("FALTAN VEINTE PARA LAS ") + nextHStr;
-                if (varSeed == 1) return String("MENOS VEINTE PARA ") + nextHStr;
-                return String("CERCA DE LAS ") + nextHStr;
+                if (varSeed == 0) return nextFaltan + "VEINTE " + nextParaLas + nextHStr;
+                if (varSeed == 1) return String("MENOS VEINTE PARA ") + nextLas + nextHStr;
+                return String("CERCA DE ") + nextLas + nextHStr;
 
             case 9: // 45 - 49
-                if (varSeed == 0) return String("FALTAN QUINCE PARA LAS ") + nextHStr;
-                if (varSeed == 1) return String("MENOS CUARTO PARA ") + nextHStr;
-                return String("CERCA DE LAS ") + nextHStr;
+                if (varSeed == 0) return nextFaltan + "QUINCE " + nextParaLas + nextHStr;
+                if (varSeed == 1) return String("MENOS CUARTO PARA ") + nextLas + nextHStr;
+                return String("CERCA DE ") + nextLas + nextHStr;
 
             case 10: // 50 - 54
-                if (varSeed == 0) return String("FALTAN DIEZ PARA LAS ") + nextHStr;
-                if (varSeed == 1) return String("CASI LAS ") + nextHStr;
-                return String("ROZANDO LAS ") + nextHStr;
+                if (varSeed == 0) return nextFaltan + "DIEZ " + nextParaLas + nextHStr;
+                if (varSeed == 1) return nextCasiLas + nextHStr;
+                return nextRozando + nextHStr;
 
             case 11: // 55 - 59
             default:
-                if (varSeed == 0) return String("SON CASI LAS ") + nextHStr;
-                if (varSeed == 1) return String("POCO PARA LAS ") + nextHStr;
-                return String("FALTA POCO PARA LAS ") + nextHStr;
+                if (varSeed == 0) return nextSonCasi + nextHStr;
+                if (varSeed == 1) return String("POCO PARA ") + nextLas + nextHStr;
+                return String("FALTA POCO ") + nextParaLas + nextHStr;
         }
     }
 

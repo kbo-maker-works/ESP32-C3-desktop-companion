@@ -59,7 +59,9 @@ def main():
     cwd = (payload.get("workspace") or {}).get("current_dir", "")
     five_txt = f"{five_pct:.0f}%" if five_pct is not None else "--"
     week_txt = f"{week_pct:.0f}%" if week_pct is not None else "--"
-    print(f"{model} | {os.path.basename(cwd)} | 5h:{five_txt} wk:{week_txt}")
+    ctx_pct = (payload.get("context_window") or {}).get("used_percentage")
+    ctx_txt = f"{ctx_pct:.0f}%" if ctx_pct is not None else "--"
+    print(f"{model} | {os.path.basename(cwd)} | ctx:{ctx_txt} | 5h:{five_txt} wk:{week_txt}")
 
 
 if __name__ == "__main__":

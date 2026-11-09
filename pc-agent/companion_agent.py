@@ -10,12 +10,16 @@ Supported OS:
 - macOS (/dev/cu.usbmodem* / /dev/tty.usbmodem*)
 - Linux (/dev/ttyACM* / /dev/ttyUSB*)
 """
+import datetime
 import glob
 import json
+import math
 import os
 import platform
+import subprocess
 import sys
 import time
+import urllib.request
 
 import psutil
 import serial
@@ -124,18 +128,56 @@ def read_real_usage():
 
 
 def scan_real_claude_tokens():
-    """Scans local Claude Code stats-cache.json for active session / latest day tokens."""
+    """Scans local Claude Code project transcripts and stats-cache.json for current day's token consumption."""
     global _last_log_check_time, _cached_tokens
     now = time.time()
     
-    if now - _last_log_check_time < 2 and _cached_tokens > 0:
+    if now - _last_log_check_time < 2 and _cached_tokens >= 0:
         return _cached_tokens
 
     _last_log_check_time = now
-    latest_day_tokens = 0
-    claude_dirs = get_claude_dirs()
 
-    # Read latest day's model tokens from stats-cache.json
+    now_dt = datetime.datetime.now()
+    today_start_ts = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    today_str = now_dt.strftime("%Y-%m-%d")
+
+    today_tokens = 0
+    found_today_activity = False
+
+    claude_dirs = get_claude_dirs()
+    
+    # 1. Scan active session .jsonl files in ~/.claude/projects for today's tokens
+    for c_dir in claude_dirs:
+        projects_dir = os.path.join(c_dir, "projects")
+        if os.path.exists(projects_dir):
+            for root, dirs, files in os.walk(projects_dir):
+                for f in files:
+                    if f.endswith(".jsonl"):
+                        p = os.path.join(root, f)
+                        try:
+                            mtime = os.path.getmtime(p)
+                            if mtime >= today_start_ts:
+                                with open(p, "r", encoding="utf-8") as jf:
+                                    for line in jf:
+                                        try:
+                                            entry = json.loads(line)
+                                            usage = entry.get("usage", {}) or (entry.get("message", {}) or {}).get("usage", {})
+                                            if usage:
+                                                inp = usage.get("input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
+                                                out = usage.get("output_tokens", 0)
+                                                if (inp + out) > 0:
+                                                    today_tokens += (inp + out)
+                                                    found_today_activity = True
+                                        except Exception:
+                                            pass
+                        except Exception:
+                            pass
+
+    if found_today_activity and today_tokens > 0:
+        _cached_tokens = today_tokens
+        return today_tokens
+
+    # 2. Fallback: check stats-cache.json for today's entry
     for c_dir in claude_dirs:
         stats_file = os.path.join(c_dir, "stats-cache.json")
         if os.path.exists(stats_file):
@@ -143,35 +185,164 @@ def scan_real_claude_tokens():
                 with open(stats_file, "r", encoding="utf-8") as f:
                     sdata = json.load(f)
                     daily_models = sdata.get("dailyModelTokens", [])
-                    if daily_models:
-                        # Pick latest active day's model tokens
-                        latest_entry = daily_models[-1]
-                        latest_day_tokens = sum(latest_entry.get("tokensByModel", {}).values())
+                    for entry in reversed(daily_models):
+                        if entry.get("date") == today_str:
+                            tokens = sum(entry.get("tokensByModel", {}).values())
+                            if tokens > 0:
+                                _cached_tokens = tokens
+                                return tokens
             except Exception:
                 pass
 
-    if latest_day_tokens > 0:
-        _cached_tokens = latest_day_tokens
-        return latest_day_tokens
+    _cached_tokens = today_tokens
+    return today_tokens
 
-    return 142500
+
+CLAUDE_THINKING_VERBS = [
+    # Cerebrales y de pensamiento
+    "Cogitating...",
+    "Ruminating...",
+    "Contemplating...",
+    "Deliberating...",
+    "Pondering...",
+    "Cerebrating...",
+    "Musing...",
+    "Inferring...",
+    "Deciphering...",
+    # Culinarias
+    "Baking...",
+    "Brewing...",
+    "Marinating...",
+    "Simmering...",
+    "Stewing...",
+    "Percolating...",
+    "Fermenting...",
+    "Caramelizing...",
+    # Orgánicas y crecimiento
+    "Incubating...",
+    "Germinating...",
+    "Crystallizing...",
+    "Weaving...",
+    # Humorísticas y extravagantes
+    "Clauding...",
+    "Schlepping...",
+    "Moseying...",
+    "Honking...",
+    "Actioning...",
+    "Actualizing...",
+    "Jitterbugging...",
+    "Hoolabalooing...",
+    "Calculating...",
+    "Computing...",
+    "Conjuring..."
+]
+
+
+def is_claude_actively_thinking():
+    """Checks if Claude Code is actively generating/thinking right now.
+    
+    Returns True if a Claude process is running AND the active transcript log 
+    was modified within the last 12 seconds.
+    """
+    now = time.time()
+    process_found = False
+    for proc in psutil.process_iter(['name', 'cmdline']):
+        try:
+            name = (proc.info.get('name') or '').lower()
+            cmd = " ".join([str(c) for c in (proc.info.get('cmdline') or []) if c]).lower()
+            if 'claude' in name or 'claude' in cmd or 'antigravity' in name:
+                process_found = True
+                break
+        except Exception:
+            pass
+
+    if not process_found:
+        return False
+
+    claude_dirs = get_claude_dirs()
+    for c_dir in claude_dirs:
+        projects_dir = os.path.join(c_dir, "projects")
+        if os.path.exists(projects_dir):
+            for root, dirs, files in os.walk(projects_dir):
+                for f in files:
+                    if f.endswith(".jsonl"):
+                        try:
+                            mtime = os.path.getmtime(os.path.join(root, f))
+                            if (now - mtime) <= 12:
+                                return True
+                        except Exception:
+                            pass
+    return False
+
+
+def format_claude_account(email_or_name, max_len=21):
+    """Formats the account identifier to fit neatly on the 240px companion screen."""
+    if not email_or_name:
+        return ""
+    val = email_or_name.strip()
+    if len(val) <= max_len:
+        return val
+
+    # If it's an email address, try smart shortening:
+    if "@" in val:
+        user, domain = val.split("@", 1)
+        # e.g. "alejandro.cabo1991@gmail.com" -> "a.cabo1991@gmail.com"
+        if "." in user:
+            parts = user.split(".")
+            short_u = parts[0][0] + "." + ".".join(parts[1:])
+            candidate = f"{short_u}@{domain}"
+            if len(candidate) <= max_len:
+                return candidate
+
+        # If still too long, abbreviate user part with ellipsis:
+        domain_part = f"@{domain}"
+        avail_u = max_len - len(domain_part) - 2
+        if avail_u >= 3:
+            return f"{user[:avail_u]}..{domain_part}"
+
+        # If domain is huge, return username
+        if len(user) <= max_len:
+            return user
+        return user[:max_len - 2] + ".."
+
+    return val[:max_len - 2] + ".."
+
+
+def get_claude_account():
+    """Reads ~/.claude.json to extract the currently logged-in account email or name."""
+    candidate_paths = [
+        os.path.expanduser("~/.claude.json"),
+        os.path.expanduser(os.path.join("~", ".claude", "claude.json")),
+    ]
+    for p in candidate_paths:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    oauth = data.get("oauthAccount") or {}
+                    email = oauth.get("emailAddress") or ""
+                    if email:
+                        return format_claude_account(email)
+                    name = oauth.get("displayName") or oauth.get("fullName") or ""
+                    if name:
+                        return format_claude_account(name)
+            except Exception:
+                pass
+    return ""
 
 
 def get_claude_metrics():
     """Returns real-time Claude metrics, process status, and mascot mood."""
-    claude_active = False
-    active_process_name = ""
+    actively_thinking = is_claude_actively_thinking()
 
-    # Detect active Claude Code CLI / node / python agent processes
+    # Detect if any claude process is running at all
+    claude_running = False
     for proc in psutil.process_iter(['name', 'cmdline']):
         try:
             name = (proc.info.get('name') or '').lower()
-            cmd_args = [str(c) for c in (proc.info.get('cmdline') or []) if c]
-            cmd = " ".join(cmd_args).lower()
-            
-            if 'claude' in name or 'claude' in cmd or 'antigravity' in name or 'gemini' in name:
-                claude_active = True
-                active_process_name = name
+            cmd = " ".join([str(c) for c in (proc.info.get('cmdline') or []) if c]).lower()
+            if 'claude' in name or 'claude' in cmd or 'antigravity' in name:
+                claude_running = True
                 break
         except Exception:
             pass
@@ -179,31 +350,27 @@ def get_claude_metrics():
     tokens = scan_real_claude_tokens()
     elapsed = int(time.time() - _start_time)
     real_usage = read_real_usage()
+    user_acc = get_claude_account()
 
     if real_usage:
-        # Real quota usage captured from Claude Code's statusline hook.
         h5_pct = real_usage.get("five_hour_pct") or 0.0
         h5_reset = format_reset(real_usage.get("five_hour_resets_at"))
         week_pct = real_usage.get("week_pct") or 0.0
         week_reset = format_reset(real_usage.get("week_resets_at"))
     else:
-        # Fallback estimate while claude_statusline.py hasn't reported yet
-        # (e.g. no session started since setup, or statusline not configured).
         h5_pct = round(min(99.9, (tokens % 100000) / 1000.0), 1)
-        h5_reset = f"{int(59 - ((elapsed // 60) % 60))}m" if claude_active else "29m"
+        h5_reset = f"{int(59 - ((elapsed // 60) % 60))}m" if claude_running else "29m"
         week_pct = round(min(99.9, (tokens / 500000.0) * 100.0), 1)
         week_reset = "4d 22h"
 
-    if claude_active:
-        # Determine coding vs thinking status
-        if (elapsed % 6 < 3):
-            status = "Coding..."
-            mood = "coding"
-        else:
-            status = "Pensando..."
-            mood = "thinking"
+    if actively_thinking:
+        # Cycle through official Claude Code thinking verbs every 30 seconds
+        verb_idx = (elapsed // 30) % len(CLAUDE_THINKING_VERBS)
+        status = CLAUDE_THINKING_VERBS[verb_idx]
+        mood = "coding" if (verb_idx % 2 == 0) else "thinking"
     else:
-        status = "Idle"
+        # Show nothing (blank) when idle, exactly like terminal prompt
+        status = ""
         moods = ["happy", "hyped", "sleeping", "happy"]
         mood = moods[(elapsed // 10) % len(moods)]
 
@@ -214,13 +381,8 @@ def get_claude_metrics():
         "c_wk": week_pct,
         "c_wkr": week_reset,
         "c_st": status,
-        "claw_mood": mood,
-        "claude_tokens": tokens,
-        "claude_5h_pct": h5_pct,
-        "claude_5h_reset": h5_reset,
-        "claude_week_pct": week_pct,
-        "claude_week_reset": week_reset,
-        "claude_status": status
+        "c_user": user_acc,
+        "claw_mood": mood
     }
 
 
@@ -308,14 +470,263 @@ def get_antigravity_metrics():
         "ag_tok": total_tokens,
         "ag_ctx": context_pct,
         "ag_sub": subagents_count,
-        "ag_t": last_tool,
-        "ag_model": model_name,
-        "ag_status": status,
-        "ag_tokens": total_tokens,
-        "ag_context_pct": context_pct,
-        "ag_subagents": subagents_count,
-        "ag_tool": last_tool
+        "ag_t": last_tool
     }
+
+
+# ---------------------------------------------------------------------------
+# OpenSky Network Live Flight Radar Metrics (Central Madrid 25km Radius)
+# ---------------------------------------------------------------------------
+MADRID_LAT = 40.4168
+MADRID_LON = -3.7038
+
+AIRLINES = {
+    "IBE": "Iberia", "IBS": "Iberia Express", "ANE": "Air Nostrum", "AEA": "Air Europa",
+    "RYR": "Ryanair", "VLG": "Vueling", "EJU": "easyJet", "EZY": "easyJet",
+    "TAP": "TAP Portugal", "DLH": "Lufthansa", "LHT": "Lufthansa", "AFR": "Air France",
+    "BAW": "British Airways", "SWR": "Swiss", "UAE": "Emirates", "QTR": "Qatar Airways",
+    "AAL": "American", "DAL": "Delta", "UAL": "United",
+    "AME": "Ejercito Aire", "EJC": "Ejercito Tierra", "TRT": "Fuerza Aerea",
+    "FDX": "FedEx Cargo", "UPS": "UPS Cargo", "DHL": "DHL Cargo", "BCS": "DHL Cargo",
+    "SWT": "Swiftair Cargo", "CYO": "Cygnus Cargo", "TNT": "TNT Cargo", "CLX": "Cargolux"
+}
+
+MILITARY_PREFIXES = {
+    "AME", "EJC", "TRT", "VJP", "RCH", "CNV", "FORTE", "LAGR", "BAF", "GAF",
+    "FAF", "RRR", "IAM", "HRZ", "NATO", "AF1", "SAM", "FSM"
+}
+
+CARGO_PREFIXES = {
+    "FDX", "UPS", "DHL", "BCS", "QNK", "DHK", "DHX", "SWT", "CYO", "TNT", "TAY",
+    "CLX", "GTI", "CKS", "NPT", "PAC", "BOX", "SQC", "MNB", "ABW", "TFL"
+}
+
+
+def get_flight_category(icao24, callsign):
+    """
+    Returns category code:
+    1 = Military (Red)
+    2 = Cargo (Green)
+    0 = Commercial Passenger (Yellow)
+    """
+    icao = (icao24 or "").lower()
+    call = (callsign or "").strip().upper()
+
+    for prefix in MILITARY_PREFIXES:
+        if call.startswith(prefix):
+            return 1
+    if icao.startswith("ae") or icao.startswith("af") or icao.startswith("35") or icao.startswith("348") or icao.startswith("349") or icao.startswith("43c") or icao.startswith("3b") or icao.startswith("3e"):
+        return 1
+
+    for prefix in CARGO_PREFIXES:
+        if call.startswith(prefix):
+            return 2
+
+    return 0
+
+
+def check_is_military(icao24, callsign):
+    return get_flight_category(icao24, callsign) == 1
+
+
+# Disk Cache for Flight Metrics to guarantee persistent flight data against OpenSky HTTP 429 rate-limiting
+FLIGHT_CACHE_FILE = os.path.expanduser(os.path.join("~", ".gemini", "antigravity", "flight_cache.json"))
+
+
+def load_flight_cache_from_disk():
+    try:
+        if os.path.exists(FLIGHT_CACHE_FILE):
+            with open(FLIGHT_CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data.get("fl_cnt", 0) > 0:
+                    return data
+    except Exception:
+        pass
+    return None
+
+
+def save_flight_cache_to_disk(payload):
+    try:
+        os.makedirs(os.path.dirname(FLIGHT_CACHE_FILE), exist_ok=True)
+        with open(FLIGHT_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+    except Exception:
+        pass
+
+
+_last_flight_fetch_time = 0
+_cached_flight_payload = load_flight_cache_from_disk() or {
+    "fl_act": False, "fl_call": "Sin Vuelos", "fl_air": "Madrid Sky", "fl_type": "Comercial",
+    "fl_alt": 0, "fl_spd": 0, "fl_dist": 0.0, "fl_head": 0, "fl_dir": "N", "fl_cnt": 0
+}
+
+
+def haversine_dist(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+
+def bearing_deg(lat1, lon1, lat2, lon2):
+    dlon = math.radians(lon2 - lon1)
+    y = math.sin(dlon) * math.cos(math.radians(lat2))
+    x = math.cos(math.radians(lat1)) * math.sin(math.radians(lat2)) - math.sin(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.cos(dlon)
+    b = math.degrees(math.atan2(y, x))
+    return int((b + 360) % 360)
+
+
+def cardinal_dir(b):
+    dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    idx = int((b + 22.5) // 45) % 8
+    return dirs[idx]
+
+
+def get_flight_radar_metrics():
+    """Fetches live ADS-B flights around Central Madrid (25km radius) using FlightRadar24 (Primary) + OpenSky (Fallback)."""
+    global _last_flight_fetch_time, _cached_flight_payload
+    now = time.time()
+
+    # 3s cache interval for true real-time flight tracking
+    if now - _last_flight_fetch_time < 3 and _cached_flight_payload.get("fl_cnt", 0) > 0:
+        return _cached_flight_payload
+
+    _last_flight_fetch_time = now
+    flights = []
+
+    # 1. Primary High-Speed Real-Time ADS-B Provider: FlightRadar24 Cloud Feed
+    try:
+        url_fr24 = "https://data-cloud.flightradar24.com/zones/fcgi/feed.js?faa=1&satellite=1&mlat=1&flarm=1&adsb=1&gnd=0&air=1&vehicles=0&estimated=1&maxage=14400&gliders=0&stats=1&bounds=40.80,40.00,-4.30,-3.10"
+        headers_fr24 = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept": "application/json"
+        }
+        req = urllib.request.Request(url_fr24, headers=headers_fr24)
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode())
+            for k, v in data.items():
+                if not isinstance(v, list) or len(v) < 6:
+                    continue
+                icao24 = (v[0] or "").lower()
+                lat = v[1]
+                lon = v[2]
+                track = v[3]
+                alt_ft = v[4]
+                spd_kts = v[5]
+                callsign = v[16] if len(v) > 16 and v[16] else (v[13] if len(v) > 13 and v[13] else icao24.upper())
+                callsign = str(callsign).strip()
+
+                if alt_ft < 250 or lat is None or lon is None:
+                    continue  # Ignore grounded / parked vehicles
+
+                dist_km = haversine_dist(MADRID_LAT, MADRID_LON, lat, lon)
+                brg = bearing_deg(MADRID_LAT, MADRID_LON, lat, lon)
+                card = cardinal_dir(brg)
+                cat = get_flight_category(icao24, callsign)
+                is_mil = (cat == 1)
+                is_cargo = (cat == 2)
+                airline = "Militar" if is_mil else ("Cargo" if is_cargo else "Comercial")
+                if len(callsign) >= 3 and callsign[:3].upper() in AIRLINES:
+                    airline = AIRLINES[callsign[:3].upper()]
+
+                flights.append({
+                    "callsign": callsign,
+                    "airline": airline,
+                    "dist_km": round(dist_km, 1),
+                    "alt_m": int(alt_ft * 0.3048),
+                    "spd_kmh": int(spd_kts * 1.852),
+                    "bearing": int(brg),
+                    "cardinal": card,
+                    "track": int(track),
+                    "cat": cat,
+                    "is_military": is_mil
+                })
+    except Exception as fr24_err:
+        # 2. Secondary Fallback Provider: OpenSky Network
+        try:
+            lamin, lomin = 40.00, -4.20
+            lamax, lomax = 40.80, -3.20
+            url_os = f"https://opensky-network.org/api/states/all?lamin={lamin}&lomin={lomin}&lamax={lamax}&lomax={lomax}"
+            req = urllib.request.Request(url_os, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+                states = data.get("states", []) or []
+                for s in states:
+                    icao24 = s[0] or ""
+                    callsign = (s[1] or "").strip()
+                    lon, lat, alt_m, on_ground, vel_ms, track = s[5], s[6], s[7] or 0, s[8], s[9] or 0, s[10] or 0
+                    if on_ground or lat is None or lon is None:
+                        continue
+                    dist_km = haversine_dist(MADRID_LAT, MADRID_LON, lat, lon)
+                    brg = bearing_deg(MADRID_LAT, MADRID_LON, lat, lon)
+                    card = cardinal_dir(brg)
+                    cat = get_flight_category(icao24, callsign)
+                    is_mil = (cat == 1)
+                    is_cargo = (cat == 2)
+                    airline = "Militar" if is_mil else ("Cargo" if is_cargo else "Comercial")
+                    if len(callsign) >= 3 and callsign[:3].upper() in AIRLINES:
+                        airline = AIRLINES[callsign[:3].upper()]
+                    flights.append({
+                        "callsign": callsign or icao24.upper(),
+                        "airline": airline,
+                        "dist_km": round(dist_km, 1),
+                        "alt_m": int(alt_m),
+                        "spd_kmh": int(vel_ms * 3.6),
+                        "bearing": int(brg),
+                        "cardinal": card,
+                        "track": int(track),
+                        "cat": cat,
+                        "is_military": is_mil
+                    })
+        except Exception as os_err:
+            pass
+
+    if flights:
+        flights.sort(key=lambda x: x["dist_km"])
+        f = flights[0]
+        type_str = "Militar" if f["cat"] == 1 else ("Cargo" if f["cat"] == 2 else "Comercial")
+        new_payload = {
+            "fl_act": True,
+            "fl_call": f["callsign"][:12],
+            "fl_air": f["airline"][:12],
+            "fl_type": type_str,
+            "fl_alt": f["alt_m"],
+            "fl_spd": f["spd_kmh"],
+            "fl_dist": f["dist_km"],
+            "fl_head": f["bearing"],
+            "fl_dir": f["cardinal"],
+            "fl_cnt": len(flights)
+        }
+
+        # Populate multi-flight entries (up to 8 flights) for Radar Scope & Cards List
+        for idx, item in enumerate(flights[:8], 1):
+            new_payload[f"fl_c{idx}"] = item["callsign"][:10]
+            new_payload[f"fl_a{idx}"] = item["airline"][:10]
+            new_payload[f"fl_d{idx}"] = item["dist_km"]
+            new_payload[f"fl_h{idx}"] = item["bearing"]
+            new_payload[f"fl_dir{idx}"] = item["cardinal"]
+            new_payload[f"fl_alt{idx}"] = item["alt_m"]
+            new_payload[f"fl_spd{idx}"] = item["spd_kmh"]
+            new_payload[f"fl_m{idx}"] = 1 if item["cat"] == 1 else 0
+            new_payload[f"fl_t{idx}"] = item["cat"] # 0=Pax, 1=Mil, 2=Cargo
+
+        _cached_flight_payload = new_payload
+        save_flight_cache_to_disk(new_payload)
+        return _cached_flight_payload
+
+    # Try loading disk cache if RAM payload was empty
+    disk_cache = load_flight_cache_from_disk()
+    if disk_cache:
+        _cached_flight_payload = disk_cache
+        return _cached_flight_payload
+
+    _cached_flight_payload = {
+        "fl_act": False, "fl_call": "Sin Vuelos", "fl_air": "Madrid Sky", "fl_type": "Comercial",
+        "fl_alt": 0, "fl_spd": 0, "fl_dist": 0.0, "fl_head": 0, "fl_dir": "N", "fl_cnt": 0
+    }
+    return _cached_flight_payload
 
 
 def main():
@@ -332,24 +743,54 @@ def main():
     while True:
         port = explicit_port or find_serial_port()
         if not port:
-            print("Searching for ESP32 USB CDC serial port...", flush=True)
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Searching for ESP32 USB CDC serial port...", flush=True)
             time.sleep(RECONNECT_INTERVAL_SEC)
             continue
 
-        print(f"Connecting to {port} @ {BAUD_RATE} baud...", flush=True)
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Connecting to {port} @ {BAUD_RATE} baud...", flush=True)
 
         try:
             with serial.Serial(port, BAUD_RATE, timeout=1) as ser:
-                ser.dtr = True
-                ser.rts = True
-                print(f"Connected to {port}! Streaming AI metrics (Claude & Antigravity) every {SEND_INTERVAL_SEC}s.", flush=True)
+                ser.dtr = False
+                ser.rts = False
+                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Connected to {port}! Streaming AI & Flight Radar metrics every {SEND_INTERVAL_SEC}s.", flush=True)
                 while True:
                     try:
                         payload = get_claude_metrics()
                         payload.update(get_antigravity_metrics())
+                        flight_p = get_flight_radar_metrics()
+                        payload.update(flight_p)
+
                         line = json.dumps(payload) + "\n"
                         ser.write(line.encode("utf-8"))
                         ser.flush()
+
+                        # Verbose Console Status Logging
+                        fl_cnt = flight_p.get("fl_cnt", 0)
+                        fl_act = flight_p.get("fl_act", False)
+                        c_tok = payload.get("c_tok", 0)
+                        c_usr = payload.get("c_user", "")
+                        ag_m = payload.get("ag_m", "Flash")
+                        ag_st = payload.get("ag_st", "Idle")
+
+                        usr_log = f" [{c_usr}]" if c_usr else ""
+                        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] TX Serial ({len(line)} B): Claude={c_tok:,} tok{usr_log} | AG={ag_m} [{ag_st}] | Flights Overhead={fl_cnt} (Active={fl_act})", flush=True)
+                        if fl_cnt > 0:
+                            for idx in range(1, min(fl_cnt, 8) + 1):
+                                c_name = flight_p.get(f"fl_c{idx}", "")
+                                c_air = flight_p.get(f"fl_a{idx}", "")
+                                c_dist = flight_p.get(f"fl_d{idx}", 0.0)
+                                c_dir = flight_p.get(f"fl_dir{idx}", "N")
+                                cat_code = flight_p.get(f"fl_t{idx}", 0)
+                                if cat_code == 1:
+                                    c_type_str = "🔴 MILITAR"
+                                elif cat_code == 2:
+                                    c_type_str = "🟢 CARGO"
+                                else:
+                                    c_type_str = "🟡 PASAJEROS"
+                                if c_name:
+                                    print(f"   ✈ {idx}. {c_name} ({c_air}) - {c_dist}km {c_dir} [{c_type_str}]", flush=True)
+
                     except (serial.SerialException, OSError) as write_err:
                         print(f"Serial write error ({write_err}). Reconnecting...", flush=True)
                         break
