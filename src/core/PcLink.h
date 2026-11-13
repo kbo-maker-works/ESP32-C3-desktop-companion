@@ -38,6 +38,14 @@ public:
     String claudeUser() const { return _claudeUser; }
     String clawMood() const { return _clawMood; }
 
+    // Claude Code hook events ("input" / "done" / "fail"), see claude_events_hook.py.
+    // clawEventSeq() changes every time a new event arrives (0 = none yet).
+    uint32_t clawEventSeq() const { return _clawEventSeq; }
+    uint32_t clawEventRxMs() const { return _clawEventRxMs; }
+    String clawEvent() const { return _clawEvent; }
+    String clawEventText() const { return _clawEventText; }
+    String clawEventProject() const { return _clawEventProject; }
+
     // Antigravity AI Assistant Metrics
     String agModel() const { return _agModel; }
     String agStatus() const { return _agStatus; }
@@ -124,6 +132,18 @@ private:
 
         if (!doc["claw_mood"].isNull()) _clawMood = doc["claw_mood"].as<String>();
 
+        if (!doc["claw_ev_id"].isNull()) {
+            uint32_t id = doc["claw_ev_id"].as<uint32_t>();
+            if (id != 0 && id != _clawEventId) {
+                _clawEventId = id;
+                _clawEvent = doc["claw_ev"] | "";
+                _clawEventText = doc["claw_ev_txt"] | "";
+                _clawEventProject = doc["claw_ev_prj"] | "";
+                _clawEventRxMs = millis();
+                _clawEventSeq++;
+            }
+        }
+
         // Parse Antigravity Fields (supports long & short keys)
         if (!doc["ag_m"].isNull()) _agModel = doc["ag_m"].as<String>();
         else if (!doc["ag_model"].isNull()) _agModel = doc["ag_model"].as<String>();
@@ -208,6 +228,13 @@ private:
     String _claudeStatus = "Idle";
     String _claudeUser = "";
     String _clawMood = "happy";
+
+    uint32_t _clawEventId = 0;
+    uint32_t _clawEventSeq = 0;
+    uint32_t _clawEventRxMs = 0;
+    String _clawEvent = "";
+    String _clawEventText = "";
+    String _clawEventProject = "";
 
     // Antigravity defaults
     String _agModel = "Gemini 3.6 Flash";

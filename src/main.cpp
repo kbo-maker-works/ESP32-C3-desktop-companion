@@ -46,10 +46,29 @@ void loop() {
     pcLink.update();
     touch.update();
 
-    if (touch.wasTapped()) {
+    bool tapped = touch.wasTapped();
+    bool longPressed = !tapped && touch.wasLongPressed();
+
+    if (pages.isTemporary() && (tapped || longPressed)) {
+        // Alert jump in progress: any touch dismisses it and goes back.
+        clawMascotPage.dismissAlert();
+        pages.returnFromTemporary(display.tft());
+    } else if (tapped) {
         pages.next(display.tft());
-    } else if (touch.wasLongPressed()) {
+    } else if (longPressed) {
         pages.longPress(display.tft());
+    }
+
+    // Claude Code needs you, finished, or a build failed: jump to the mascot,
+    // then return to the previous page once the alert expires.
+    static uint32_t lastClawEventSeq = 0;
+    if (pcLink.clawEventSeq() != lastClawEventSeq) {
+        lastClawEventSeq = pcLink.clawEventSeq();
+        String ev = pcLink.clawEvent();
+        if (ev == "input" || ev == "fail" || ev == "done") pages.showTemporarily(&clawMascotPage, display.tft());
+    }
+    if (pages.isTemporary() && !clawMascotPage.alertActive()) {
+        pages.returnFromTemporary(display.tft());
     }
 
     pages.update(display.tft());

@@ -89,6 +89,12 @@ _start_time = time.time()
 _last_log_check_time = 0
 _cached_tokens = 0
 
+# Incremental transcript scan state (see scan_real_claude_tokens)
+_scan_day = None
+_file_offsets = {}        # path -> byte offset already consumed
+_seen_message_ids = set() # (message.id, requestId) already counted today
+_today_tokens_acc = 0
+
 RATE_LIMIT_CACHE = os.path.expanduser(os.path.join("~", ".claude", "companion_rate_limits.json"))
 
 
@@ -124,14 +130,81 @@ def read_real_usage():
 
     if data.get("five_hour_pct") is None and data.get("week_pct") is None:
         return None
+
+    # The cache is only refreshed while Claude Code is open. Once a window's
+    # reset time has passed, its last % is stale: that window is at 0 now.
+    now = time.time()
+    for pct_key, reset_key in (("five_hour_pct", "five_hour_resets_at"), ("week_pct", "week_resets_at")):
+        resets_at = data.get(reset_key)
+        try:
+            expired = resets_at is not None and float(resets_at) <= now
+        except (TypeError, ValueError):
+            expired = False
+        if expired:
+            data[pct_key] = 0.0
+            data[reset_key] = None
     return data
 
 
+def _reset_token_state(day_str):
+    """Clears the incremental scan state (called on start and when the day rolls over)."""
+    global _scan_day, _file_offsets, _seen_message_ids, _today_tokens_acc
+    _scan_day = day_str
+    _file_offsets = {}
+    _seen_message_ids = set()
+    _today_tokens_acc = 0
+
+
+def _count_usage_line(raw_line, today_start_ts):
+    """Returns the tokens of one transcript line, or 0 if it is not new usage from today.
+
+    An assistant message is written as several lines (one per content block),
+    all carrying the same usage, so each message is counted once by its id.
+    """
+    try:
+        entry = json.loads(raw_line)
+    except Exception:
+        return 0
+    if not isinstance(entry, dict):
+        return 0
+    message = entry.get("message") or {}
+    if not isinstance(message, dict):
+        message = {}
+    usage = entry.get("usage") or message.get("usage") or {}
+    if not usage:
+        return 0
+
+    ts = entry.get("timestamp")
+    if ts:
+        try:
+            entry_ts = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+            if entry_ts < today_start_ts:
+                return 0
+        except Exception:
+            pass
+
+    msg_id = message.get("id")
+    if msg_id:
+        key = (msg_id, entry.get("requestId"))
+        if key in _seen_message_ids:
+            return 0
+        _seen_message_ids.add(key)
+
+    inp = (usage.get("input_tokens") or 0) + (usage.get("cache_creation_input_tokens") or 0)
+    out = usage.get("output_tokens") or 0
+    return inp + out
+
+
 def scan_real_claude_tokens():
-    """Scans local Claude Code project transcripts and stats-cache.json for current day's token consumption."""
-    global _last_log_check_time, _cached_tokens
+    """Today's Claude Code token consumption from ~/.claude/projects transcripts.
+
+    Reads each .jsonl incrementally (only the bytes appended since the last
+    scan) and keeps a running total that resets when the day changes.
+    Falls back to stats-cache.json when no transcript activity is found.
+    """
+    global _last_log_check_time, _cached_tokens, _today_tokens_acc
     now = time.time()
-    
+
     if now - _last_log_check_time < 2 and _cached_tokens >= 0:
         return _cached_tokens
 
@@ -141,39 +214,46 @@ def scan_real_claude_tokens():
     today_start_ts = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     today_str = now_dt.strftime("%Y-%m-%d")
 
-    today_tokens = 0
-    found_today_activity = False
+    if _scan_day != today_str:
+        _reset_token_state(today_str)
 
     claude_dirs = get_claude_dirs()
-    
+
     # 1. Scan active session .jsonl files in ~/.claude/projects for today's tokens
     for c_dir in claude_dirs:
         projects_dir = os.path.join(c_dir, "projects")
-        if os.path.exists(projects_dir):
-            for root, dirs, files in os.walk(projects_dir):
-                for f in files:
-                    if f.endswith(".jsonl"):
-                        p = os.path.join(root, f)
-                        try:
-                            mtime = os.path.getmtime(p)
-                            if mtime >= today_start_ts:
-                                with open(p, "r", encoding="utf-8") as jf:
-                                    for line in jf:
-                                        try:
-                                            entry = json.loads(line)
-                                            usage = entry.get("usage", {}) or (entry.get("message", {}) or {}).get("usage", {})
-                                            if usage:
-                                                inp = usage.get("input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
-                                                out = usage.get("output_tokens", 0)
-                                                if (inp + out) > 0:
-                                                    today_tokens += (inp + out)
-                                                    found_today_activity = True
-                                        except Exception:
-                                            pass
-                        except Exception:
-                            pass
+        if not os.path.exists(projects_dir):
+            continue
+        for root, dirs, files in os.walk(projects_dir):
+            for f in files:
+                if not f.endswith(".jsonl"):
+                    continue
+                p = os.path.join(root, f)
+                try:
+                    st = os.stat(p)
+                    if st.st_mtime < today_start_ts:
+                        continue
+                    offset = _file_offsets.get(p, 0)
+                    if st.st_size < offset:
+                        offset = 0  # file was truncated/rewritten; dedup avoids double counting
+                    if st.st_size == offset:
+                        continue
+                    with open(p, "rb") as jf:
+                        jf.seek(offset)
+                        chunk = jf.read()
+                    # Only consume complete lines; a partial last line is re-read next scan
+                    last_nl = chunk.rfind(b"\n")
+                    if last_nl < 0:
+                        continue
+                    for raw in chunk[:last_nl].split(b"\n"):
+                        if raw.strip():
+                            _today_tokens_acc += _count_usage_line(raw, today_start_ts)
+                    _file_offsets[p] = offset + last_nl + 1
+                except Exception:
+                    pass
 
-    if found_today_activity and today_tokens > 0:
+    today_tokens = _today_tokens_acc
+    if today_tokens > 0:
         _cached_tokens = today_tokens
         return today_tokens
 
@@ -383,6 +463,71 @@ def get_claude_metrics():
         "c_st": status,
         "c_user": user_acc,
         "claw_mood": mood
+    }
+
+
+# ---------------------------------------------------------------------------
+# Claude Code hook events ("keep me alert") -> Claw mascot reactions
+# ---------------------------------------------------------------------------
+EVENTS_PATH = os.path.expanduser(os.path.join("~", ".claude", "companion_events.jsonl"))
+EVENT_TTL_SEC = 30       # stop forwarding an event after this long
+EVENT_STICKY_SEC = 10    # a "done" does not hide a fresher "input"/"fail"
+_events_offset = None    # None = not opened yet (start at end of file)
+_current_event = None
+
+
+def _ascii(text, max_len):
+    """The ST7789 font is plain ASCII: drop accents/emoji and clamp length."""
+    import unicodedata
+    text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    return text[:max_len]
+
+
+def get_claw_event():
+    """Tails companion_events.jsonl (written by claude_events_hook.py) and returns
+    the serial fields for the latest event, or {} when there is none recent."""
+    global _events_offset, _current_event
+    try:
+        size = os.path.getsize(EVENTS_PATH)
+    except OSError:
+        size = None
+
+    if size is not None:
+        if _events_offset is None or size < _events_offset:
+            # First run: skip history so old events don't fire on agent start.
+            # Shrunk file: the hook truncated it, read it from the beginning.
+            _events_offset = size if _events_offset is None else 0
+        if size > _events_offset:
+            try:
+                with open(EVENTS_PATH, "rb") as f:
+                    f.seek(_events_offset)
+                    chunk = f.read()
+                last_nl = chunk.rfind(b"\n")
+                if last_nl >= 0:
+                    _events_offset += last_nl + 1
+                    for raw in chunk[:last_nl].split(b"\n"):
+                        try:
+                            ev = json.loads(raw)
+                        except Exception:
+                            continue
+                        if not isinstance(ev, dict) or not ev.get("ev"):
+                            continue
+                        cur = _current_event
+                        if (ev["ev"] == "done" and cur and cur.get("ev") in ("input", "fail")
+                                and (ev.get("ts", 0) - cur.get("ts", 0)) < EVENT_STICKY_SEC):
+                            continue
+                        _current_event = ev
+            except OSError:
+                pass
+
+    ev = _current_event
+    if not ev or time.time() - float(ev.get("ts", 0)) > EVENT_TTL_SEC:
+        return {}
+    return {
+        "claw_ev": ev.get("ev", ""),
+        "claw_ev_txt": _ascii(ev.get("text", ""), 16),
+        "claw_ev_prj": _ascii(ev.get("sub", ev.get("project", "")), 32),
+        "claw_ev_id": int(float(ev.get("ts", 0)) * 1000) % 2147483647,
     }
 
 
@@ -757,6 +902,7 @@ def main():
                 while True:
                     try:
                         payload = get_claude_metrics()
+                        payload.update(get_claw_event())
                         payload.update(get_antigravity_metrics())
                         flight_p = get_flight_radar_metrics()
                         payload.update(flight_p)
@@ -774,6 +920,8 @@ def main():
                         ag_st = payload.get("ag_st", "Idle")
 
                         usr_log = f" [{c_usr}]" if c_usr else ""
+                        if payload.get("claw_ev"):
+                            usr_log += f" | Event={payload['claw_ev']} ({payload.get('claw_ev_prj', '')})"
                         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] TX Serial ({len(line)} B): Claude={c_tok:,} tok{usr_log} | AG={ag_m} [{ag_st}] | Flights Overhead={fl_cnt} (Active={fl_act})", flush=True)
                         if fl_cnt > 0:
                             for idx in range(1, min(fl_cnt, 8) + 1):
